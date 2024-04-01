@@ -166,4 +166,7 @@ run()
     .then()
     .catch((err) => {
         Logger.error(err);
+    })
+    .finally(() => {
+        process.exit();
     });
