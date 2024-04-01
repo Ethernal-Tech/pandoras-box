@@ -54,6 +54,8 @@ class Batcher {
         const txHashes: string[] = [];
         const batchErrors: string[] = [];
 
+        const startTime = performance.now();
+
         await Promise.all(Array.from(signedTxs.entries()).map(async ([address, txs]) => {
             for (const tx of txs) {
                 const singleRequests = JSON.stringify({
@@ -63,11 +65,13 @@ class Batcher {
                     id: 0,
                 });
 
-                await Batcher.sendTransaction(url, singleRequests, batchErrors, txHashes);
+                await Batcher.sendTransactionWithRetry(url, singleRequests, batchErrors, txHashes, 3);
 
                 batchBar.increment();
             }
         }));
+
+        const endTime = performance.now();
 
         if (batchErrors.length > 0) {
             Logger.warn('Errors encountered during batch sending:');
@@ -80,7 +84,7 @@ class Batcher {
         batchBar.stop();
 
         Logger.success(
-            `All transactions have been sent`
+            `All transactions have been sent in ` + (endTime - startTime) / 1000 + 's'
         );
 
         return txHashes;
@@ -189,7 +193,43 @@ class Batcher {
             //await new Promise(resolve => setTimeout(resolve, 10));
         } catch (e: any) {
             Logger.error(e.message);
+            Batcher.sendTransaction(url, singleRequests, batchErrors, txHashes);
         }
+    }
+
+    static async sendTransactionWithRetry(url: string, singleRequests: string, batchErrors: string[], txHashes: string[], maxRetries: number = 3) {
+        let retries = 0;
+        while (retries < maxRetries) {
+            try {
+                const response = await axios({
+                    url: url,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Connection': 'keep-alive',
+                    },
+                    data: '[' + singleRequests + ']',
+                });
+
+                const content = response.data;
+                for (const cnt of content) {
+                    if (cnt.hasOwnProperty('error')) {
+                        // Error occurred during batch sends
+                        batchErrors.push(cnt.error.message);
+                        continue;
+                    }
+                    txHashes.push(cnt.result);
+                }
+
+                return; // Exit the function if successful
+            } catch (e: any) {
+                Logger.error(e.message);
+                retries++;
+            }
+        }
+
+        // If max retries reached, log an error
+        Logger.error('Max retries reached. Failed to send transaction.');
     }
 }
 
