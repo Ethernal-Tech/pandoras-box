@@ -227,9 +227,6 @@ class Batcher {
                 retries++;
             }
         }
-
-        // If max retries reached, log an error
-        Logger.error('Max retries reached. Failed to send transaction.');
     }
 }
 
