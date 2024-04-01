@@ -34,6 +34,58 @@ class Batcher {
         return batches;
     }
 
+    static async sendTransactionsInParallelBySender(
+        signedTxs: Map<string, string[]>,
+        batchSize: number,
+        url: string,
+    ): Promise<string[]> {
+        const batchBar = new SingleBar({
+            barCompleteChar: '\u2588',
+            barIncompleteChar: '\u2591',
+            hideCursor: true,
+        });
+
+        Logger.info('Sending transactions in parallel by sender...');
+
+        batchBar.start(batchSize, 0, {
+            speed: 'N/A',
+        });
+
+        const txHashes: string[] = [];
+        const batchErrors: string[] = [];
+
+        await Promise.all(Array.from(signedTxs.entries()).map(async ([address, txs]) => {
+            for (const tx of txs) {
+                const singleRequests = JSON.stringify({
+                    jsonrpc: '2.0',
+                    method: 'eth_sendRawTransaction',
+                    params: [tx],
+                    id: 0,
+                });
+
+                await Batcher.sendTransaction(url, singleRequests, batchErrors, txHashes);
+
+                batchBar.increment();
+            }
+        }));
+
+        if (batchErrors.length > 0) {
+            Logger.warn('Errors encountered during batch sending:');
+
+            for (const err of batchErrors) {
+                Logger.error(err);
+            }
+        }
+
+        batchBar.stop();
+
+        Logger.success(
+            `All transactions have been sent`
+        );
+
+        return txHashes;
+    }
+
     static async batchTransactions(
         signedTxs: string[],
         batchSize: number,
@@ -134,7 +186,7 @@ class Batcher {
                 txHashes.push(cnt.result);
             }
 
-            await new Promise(resolve => setTimeout(resolve, 10));
+            //await new Promise(resolve => setTimeout(resolve, 10));
         } catch (e: any) {
             Logger.error(e.message);
         }

@@ -85,7 +85,7 @@ class Signer {
     async signTransactions(
         accounts: senderAccount[],
         transactions: TransactionRequest[]
-    ): Promise<string[]> {
+    ): Promise<Map<string, string[]>> {
         const failedTxnSignErrors: Error[] = [];
 
         const signBar = new SingleBar({
@@ -99,47 +99,52 @@ class Signer {
             speed: 'N/A',
         });
 
-        const signedTxs: string[] = [];
+        const signedTxs: Map<string, string[]> = new Map();
         const numTxs = transactions.length;
         const numAccounts = accounts.length;
-        const txsPerAccount = Math.floor(numTxs/ numAccounts);
+        const txsPerAccount = Math.floor(numTxs / numAccounts);
         const remainingTxs = numTxs % numAccounts;
 
-        let k = 0;
-        for (let i = 0; i < numAccounts; i++) {
-            const sender = accounts[i];
+        await Promise.all(accounts.map(async (sender, index) => {
+            const address = sender.getAddress();
+            const signedTxns: string[] = [];
+            const startIndex = index * txsPerAccount;
+            const endIndex = startIndex + txsPerAccount;
+            const senderTransactions = transactions.slice(startIndex, endIndex);
 
-            for (let j = 0; j < txsPerAccount; j++) {
+            for (const transaction of senderTransactions) {
                 try {
-                    signedTxs.push(
-                        await sender.wallet.signTransaction(transactions[k])
-                    );
+                    signedTxns.push(await sender.wallet.signTransaction(transaction));
                 } catch (e: any) {
                     failedTxnSignErrors.push(e);
                 }
 
-                k++;
                 signBar.increment();
             }
-        }
+
+            signedTxs.set(address, signedTxns);
+        }));
 
         const account = accounts[accounts.length - 1];
-        for (let i = 0; i < remainingTxs; i++) {
+        const address = account.getAddress();
+        const signedTxns: string[] = signedTxs.get(address) || [];
+        const remainingTxns = transactions.slice(numAccounts * txsPerAccount);
+        for (const txn of remainingTxns) {
             try {
-                signedTxs.push(
-                    await account.wallet.signTransaction(transactions[k])
+                signedTxns.push(
+                    await account.wallet.signTransaction(txn)
                 );
             } catch (e: any) {
                 failedTxnSignErrors.push(e);
             }
 
-            k++;
-
             signBar.increment();
         }
 
+        signedTxs.set(address, signedTxns);
+
         signBar.stop();
-        Logger.success(`Successfully signed ${signedTxs.length} transactions`);
+        Logger.success(`Successfully signed ${signedTxs.size} accounts`);
 
         if (failedTxnSignErrors.length > 0) {
             Logger.warn('Errors encountered during transaction signing:');

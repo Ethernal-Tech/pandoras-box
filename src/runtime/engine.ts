@@ -51,13 +51,23 @@ class Engine {
 
         Logger.title(runtime.GetStartMessage());
 
-        // Send the transactions in batches
-        return Batcher.batchTransactions(
-            signedTransactions,
-            ctx.batchSize,
-            ctx.url,
-            true,
-        );
+        // if (ctx.batchSize === 1) {
+            // Send the transactions one-by-one but in parallel by sender
+            return Batcher.sendTransactionsInParallelBySender(
+                signedTransactions,
+                ctx.numTxs,
+                ctx.url,
+            );
+       // } 
+
+        // // Send the transactions in batches
+        // return Batcher.batchTransactions(
+        //     // Convert Map to array
+        //     Array.from(signedTransactions.values()).flat(),
+        //     ctx.batchSize,
+        //     ctx.url,
+        //     true
+        // );
     }
 }
 
