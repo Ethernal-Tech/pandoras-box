@@ -55,7 +55,8 @@ class Engine {
         return Batcher.batchTransactions(
             signedTransactions,
             ctx.batchSize,
-            ctx.url
+            ctx.url,
+            true,
         );
     }
 }

@@ -102,6 +102,7 @@ async function run() {
         mnemonic,
         subAccountsCount,
         transactionCount,
+        batchSize,
         runtime,
         url
     );

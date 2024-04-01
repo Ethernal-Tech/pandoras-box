@@ -37,7 +37,8 @@ class Batcher {
     static async batchTransactions(
         signedTxs: string[],
         batchSize: number,
-        url: string
+        url: string,
+        progressBar: boolean,
     ): Promise<string[]> {
         // Generate the transaction hash batches
         const batches: string[][] = Batcher.generateBatches<string>(
@@ -45,17 +46,19 @@ class Batcher {
             batchSize
         );
 
-        Logger.info('Sending transactions in batches...');
-
         const batchBar = new SingleBar({
             barCompleteChar: '\u2588',
             barIncompleteChar: '\u2591',
             hideCursor: true,
         });
 
-        batchBar.start(batches.length, 0, {
-            speed: 'N/A',
-        });
+        if (progressBar) {
+            Logger.info('Sending transactions in batches...');
+
+            batchBar.start(batches.length, 0, {
+                speed: 'N/A',
+            });
+        }
 
         const txHashes: string[] = [];
         const batchErrors: string[] = [];
@@ -80,13 +83,13 @@ class Batcher {
 
                 await Batcher.sendTransaction(url, singleRequests, batchErrors, txHashes);
 
-                batchBar.increment();
+                if (progressBar) {
+                    batchBar.increment();
+                }
             }
         } catch (e: any) {
             Logger.error(e.message);
         }
-
-        batchBar.stop();
 
         if (batchErrors.length > 0) {
             Logger.warn('Errors encountered during batch sending:');
@@ -96,9 +99,13 @@ class Batcher {
             }
         }
 
-        Logger.success(
-            `${batches.length} ${batches.length > 1 ? 'batches' : 'batch'} sent`
-        );
+        if (progressBar) {
+            batchBar.stop();
+
+            Logger.success(
+                `${batches.length} ${batches.length > 1 ? 'batches' : 'batch'} sent`
+            );
+        }
 
         return txHashes;
     }
@@ -127,7 +134,7 @@ class Batcher {
                 txHashes.push(cnt.result);
             }
 
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 10));
         } catch (e: any) {
             Logger.error(e.message);
         }
