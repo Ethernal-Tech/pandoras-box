@@ -7,6 +7,8 @@ import Logger from '../logger/logger';
 import { TokenRuntime } from '../runtime/runtimes';
 import { distributeAccount } from './distributor';
 import DistributorErrors from './errors';
+import Batcher from '../runtime/batcher';
+import { JsonRpcProvider } from '@ethersproject/providers';
 
 class tokenRuntimeCosts {
     totalCost: number;
@@ -20,20 +22,27 @@ class tokenRuntimeCosts {
 
 class TokenDistributor {
     mnemonic: string;
+    url: string;
 
     tokenRuntime: TokenRuntime;
 
     totalTx: number;
     readyMnemonicIndexes: number[];
 
+    batchSize: number;
+
     constructor(
         mnemonic: string,
+        url: string,
         readyMnemonicIndexes: number[],
         totalTx: number,
-        tokenRuntime: TokenRuntime
+        tokenRuntime: TokenRuntime,
+        batchSize: number,
     ) {
+        this.url = url;
         this.totalTx = totalTx;
         this.mnemonic = mnemonic;
+        this.batchSize = batchSize;
         this.tokenRuntime = tokenRuntime;
         this.readyMnemonicIndexes = readyMnemonicIndexes;
     }
@@ -161,6 +170,37 @@ class TokenDistributor {
         // Clear the list of ready indexes
         this.readyMnemonicIndexes = [];
 
+        const provider = new JsonRpcProvider(this.url);
+
+        // Estimate a simple transfer transaction
+        const gasEstimation = await this.tokenRuntime.EstimateBaseTx();  
+        const senderWallet = Wallet.fromMnemonic(
+            this.mnemonic,
+            `m/44'/60'/0'/0/0`
+        ).connect(provider);;
+
+        const gasPrice = await senderWallet.getGasPrice();
+        const chainID = await senderWallet.getChainId();
+        let nonce = await senderWallet.getTransactionCount();
+        const signedTxs: string[] = [];
+
+        for (const acc of accounts) {
+            let fundTx = await this.tokenRuntime.CreateFundTransaction(
+                acc.address,
+                acc.missingFunds.toNumber()
+            );
+
+            fundTx.gasLimit = BigNumber.from(gasEstimation).mul(150).div(100);
+            fundTx.gasPrice = BigNumber.from(gasPrice).mul(150).div(100);;
+            fundTx.nonce = nonce;
+            fundTx.chainId = chainID;
+
+            signedTxs.push(await senderWallet.signTransaction(fundTx));
+            nonce++;
+        }
+
+        const txHashes = await Batcher.batchTransactions(signedTxs, this.batchSize, this.url, false);
+
         const fundBar = new SingleBar({
             barCompleteChar: '\u2588',
             barIncompleteChar: '\u2591',
@@ -169,19 +209,44 @@ class TokenDistributor {
 
         fundBar.start(accounts.length, 0, {
             speed: 'N/A',
-        });
+        }); 
 
-        for (const acc of accounts) {
-            await this.tokenRuntime.FundAccount(
-                acc.address,
-                acc.missingFunds.toNumber()
-            );
+        const waitErrors: string[] = [];
+        for (let i = 0; i < txHashes.length; i++) {
+            const txHash = txHashes[i];
+            try {
+                const txReceipt = await provider.waitForTransaction(
+                    txHash,
+                    1,
+                    60*1000, // 1min
+                );
+                fundBar.increment();
 
-            fundBar.increment();
-            this.readyMnemonicIndexes.push(acc.mnemonicIndex);
+                if (txReceipt == null) {
+                    throw new Error(
+                    `transaction ${txHash} failed to be fetched in time`
+                    );
+                } else if (txReceipt.status != undefined && txReceipt.status == 0) {
+                    throw new Error(
+                    `transaction ${txHash} failed during execution`
+                    );
+                }
+
+                this.readyMnemonicIndexes.push(accounts[i].mnemonicIndex);
+            } catch (e: any) {
+                waitErrors.push(e);
+            }
         }
 
         fundBar.stop();
+
+        if (waitErrors.length > 0) {
+            Logger.warn('Errors encountered during funding of ERC20 tokens of sub accounts:');
+
+            for (const err of waitErrors) {
+                Logger.error(err);
+            }
+        }
     }
 
     async getFundableAccounts(
@@ -191,6 +256,7 @@ class TokenDistributor {
         // Check if the root wallet has enough token funds to distribute
         const accountsToFund: distributeAccount[] = [];
         let distributorBalance = await this.tokenRuntime.GetSupplierBalance();
+        Logger.info(`ERC20 Distributor balance: ${distributorBalance}`);
 
         while (distributorBalance > costs.subAccount && initialSet.size() > 0) {
             const acc = initialSet.pop() as distributeAccount;

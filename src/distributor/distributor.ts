@@ -1,5 +1,5 @@
 import { BigNumber } from '@ethersproject/bignumber';
-import { JsonRpcProvider, Provider, TransactionResponse, TransactionRequest } from '@ethersproject/providers';
+import { JsonRpcProvider, Provider, TransactionRequest } from '@ethersproject/providers';
 import { formatEther } from '@ethersproject/units';
 import { Wallet } from '@ethersproject/wallet';
 import { SingleBar } from 'cli-progress';
@@ -9,7 +9,6 @@ import Logger from '../logger/logger';
 import { Runtime } from '../runtime/runtimes';
 import DistributorErrors from './errors';
 import Batcher from '../runtime/batcher';
-import axios from 'axios';
 
 class distributeAccount {
     missingFunds: BigNumber;

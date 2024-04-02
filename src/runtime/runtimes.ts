@@ -49,6 +49,9 @@ export interface TokenRuntime extends Runtime, InitializedRuntime {
 
     // Funds the specified account
     FundAccount(address: string, amount: number): Promise<void>;
+
+    // Creates a fund transaction
+    CreateFundTransaction(to: string, amount: number): Promise<TransactionRequest>;
 }
 
 export interface NFTRuntime extends Runtime, InitializedRuntime {}

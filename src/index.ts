@@ -113,9 +113,11 @@ async function run() {
     if (mode === RuntimeType.ERC20) {
         const tokenDistributor = new TokenDistributor(
             mnemonic,
+            url,
             accountIndexes,
             transactionCount,
-            runtime as TokenRuntime
+            runtime as TokenRuntime,
+            batchSize
         );
 
         // Start the distribution

@@ -106,6 +106,24 @@ class ERC20Runtime {
         await tx.wait();
     }
 
+    async CreateFundTransaction(to: string, amount: number): Promise<TransactionRequest> {
+        if (!this.contract) {
+            throw RuntimeErrors.errRuntimeNotInitialized;
+        }
+
+        let tr = await this.contract.populateTransaction.transfer(to, amount);
+
+        return {
+            to: tr.to,
+            value: tr.value,
+            data: tr.data,
+            gasPrice: tr.gasPrice,
+            gasLimit: tr.gasLimit,
+            nonce: tr.nonce,
+            chainId: tr.chainId
+        };
+    }
+
     GetTokenSymbol(): string {
         return this.coinSymbol;
     }
