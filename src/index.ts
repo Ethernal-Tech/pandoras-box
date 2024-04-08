@@ -59,6 +59,10 @@ async function run() {
             'The batch size of JSON-RPC transactions to send per second',
             '20'
         )
+        .option(
+            '--dynamic',
+            'Use dynamic transactions',
+        )
         .parse();
 
     const options = program.opts();
@@ -70,6 +74,7 @@ async function run() {
     const subAccountsCount = options.SubAccounts;
     const batchSize = options.batch;
     const output = options.output;
+    const dynamic = options.dynamic;
 
     let runtime: Runtime;
     switch (mode) {
@@ -138,7 +143,8 @@ async function run() {
             transactionCount,
             batchSize,
             mnemonic,
-            url
+            url,
+            dynamic
         )
     );
 

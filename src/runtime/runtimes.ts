@@ -22,7 +22,8 @@ export interface Runtime {
     // Constructs the specific runtime transactions
     ConstructTransactions(
         accounts: senderAccount[],
-        numTxs: number
+        numTxs: number,
+        dynamic: boolean
     ): Promise<TransactionRequest[]>;
 
     // Returns the start message for the user output

@@ -12,12 +12,15 @@ class EngineContext {
     mnemonic: string;
     url: string;
 
+    dynamic: boolean;
+
     constructor(
         accountIndexes: number[],
         numTxs: number,
         batchSize: number,
         mnemonic: string,
-        url: string
+        url: string,
+        dynamic: boolean,
     ) {
         this.accountIndexes = accountIndexes;
         this.numTxs = numTxs;
@@ -25,6 +28,8 @@ class EngineContext {
 
         this.mnemonic = mnemonic;
         this.url = url;
+
+        this.dynamic = dynamic;
     }
 }
 
@@ -41,7 +46,7 @@ class Engine {
 
         // Construct the transactions
         const rawTransactions: TransactionRequest[] =
-            await runtime.ConstructTransactions(accounts, ctx.numTxs);
+            await runtime.ConstructTransactions(accounts, ctx.numTxs, ctx.dynamic);
 
         // Sign the transactions
         const signedTransactions = await signer.signTransactions(

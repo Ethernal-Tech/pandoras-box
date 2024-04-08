@@ -114,7 +114,7 @@ class Distributor {
 
         // add some more tokens to base tx cost if london fork is enabled,
         // since base fee dynamically expands
-        const baseTxCost = baseGasPrice.mul(baseTxEstimate).add(inherentValue).mul(10);
+        const baseTxCost = baseGasPrice.mul(baseTxEstimate).add(inherentValue).mul(20);
 
         // Calculate how much each sub-account needs
         // to execute their part of the run cycle.
@@ -188,7 +188,7 @@ class Distributor {
         });
 
         costTable.push(
-            ['Required acc. balance', formatEther(costs.subAccount)],
+            ['Recommended acc. balance', formatEther(costs.subAccount)],
             ['Single distribution cost', formatEther(costs.accDistributionCost)]
         );
 

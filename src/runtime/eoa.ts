@@ -1,5 +1,6 @@
 import { BigNumber } from '@ethersproject/bignumber';
 import {
+    FeeData,
     JsonRpcProvider,
     Provider,
     TransactionRequest,
@@ -52,7 +53,8 @@ class EOARuntime {
 
     async ConstructTransactions(
         accounts: senderAccount[],
-        numTx: number
+        numTx: number,
+        dynamic: boolean
     ): Promise<TransactionRequest[]> {
         const queryWallet = Wallet.fromMnemonic(
             this.mnemonic,
@@ -60,10 +62,18 @@ class EOARuntime {
         ).connect(this.provider);
 
         const chainID = await queryWallet.getChainId();
+        const feeData = await this.provider.getFeeData();
         const gasPrice = this.gasPrice;
 
         Logger.info(`Chain ID: ${chainID}`);
-        Logger.info(`Avg. gas price: ${gasPrice.toHexString()}`);
+
+        if (dynamic) {
+            Logger.info('Dynamic fee data:');
+            Logger.info(`Current max fee per gas: ${feeData.maxFeePerGas?.toHexString()}`);
+            Logger.info(`Curent max priority fee per gas: ${feeData.maxPriorityFeePerGas?.toHexString()}`);
+        } else {
+            Logger.info(`Avg. gas price: ${gasPrice.toHexString()}`);
+        }
 
         const constructBar = new SingleBar({
             barCompleteChar: '\u2588',
@@ -75,6 +85,7 @@ class EOARuntime {
         constructBar.start(numTx, 0, {
             speed: 'N/A',
         });
+
 
         const transactions: TransactionRequest[] = [];
 
@@ -89,15 +100,7 @@ class EOARuntime {
                 const receiverIndex = (i + j) % numAccounts;
                 const receiver = accounts[receiverIndex];
 
-                transactions.push({
-                    from: sender.getAddress(),
-                    chainId: chainID,
-                    to: receiver.getAddress(),
-                    gasPrice: gasPrice,
-                    gasLimit: this.gasEstimation,
-                    value: this.defaultValue,
-                    nonce: sender.getNonce(),
-                });
+                transactions.push(this.createTransferTransaction(sender, receiver, chainID, gasPrice, feeData, dynamic));
 
                 sender.incrNonce();
                 constructBar.increment();
@@ -107,15 +110,7 @@ class EOARuntime {
         const sender = accounts[accounts.length - 1];
         const receiver = accounts[0];
         for (let i = 0; i < remainingTxs; i++) {
-            transactions.push({
-                from: sender.getAddress(),
-                chainId: chainID,
-                to: receiver.getAddress(),
-                gasPrice: gasPrice,
-                gasLimit: this.gasEstimation,
-                value: this.defaultValue,
-                nonce: sender.getNonce(),
-            });
+            transactions.push(this.createTransferTransaction(sender, receiver, chainID, gasPrice, feeData, dynamic));
 
             sender.incrNonce();
             constructBar.increment();
@@ -129,6 +124,42 @@ class EOARuntime {
 
     GetStartMessage(): string {
         return '\n⚡️ EOA to EOA transfers initialized ️⚡️\n';
+    }
+
+    createTransferTransaction(
+        sender: senderAccount, 
+        receiver: senderAccount, 
+        chainID: number, 
+        gasPrice: BigNumber,
+        feeData: FeeData,
+        dynamic: boolean = false
+    ) : TransactionRequest {
+
+        let transaction: TransactionRequest = {
+            from: sender.getAddress(),
+            chainId: chainID,
+            to: receiver.getAddress(),
+            gasLimit: this.gasEstimation,
+            value: this.defaultValue,
+            nonce: sender.getNonce(),
+        };
+
+        if (dynamic) {
+            if (feeData.maxFeePerGas === undefined || feeData.maxPriorityFeePerGas === undefined) {
+                throw new Error('Dynamic fee data not available');
+            }
+
+            const maxFeePerGas = BigNumber.from(feeData.maxFeePerGas).mul(2);
+            const maxPriorityFeePerGas = BigNumber.from(feeData.maxPriorityFeePerGas).mul(2);
+
+            transaction.maxFeePerGas = maxFeePerGas;
+            transaction.maxPriorityFeePerGas = maxPriorityFeePerGas;
+            transaction.type = 2; // dynamic fee type
+        } else {
+            transaction.gasPrice = gasPrice;
+        }
+
+        return transaction;
     }
 }
 

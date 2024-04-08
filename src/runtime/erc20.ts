@@ -1,6 +1,7 @@
 import { BigNumber } from '@ethersproject/bignumber';
 import { Contract, ContractFactory } from '@ethersproject/contracts';
 import {
+    FeeData,
     JsonRpcProvider,
     Provider,
     TransactionRequest,
@@ -140,17 +141,25 @@ class ERC20Runtime {
 
     async ConstructTransactions(
         accounts: senderAccount[],
-        numTx: number
+        numTx: number,
+        dynamic: boolean
     ): Promise<TransactionRequest[]> {
         if (!this.contract) {
             throw RuntimeErrors.errRuntimeNotInitialized;
         }
 
         const chainID = await this.baseDeployer.getChainId();
+        const feeData = await this.provider.getFeeData();
         const gasPrice = this.gasPrice;
 
         Logger.info(`Chain ID: ${chainID}`);
-        Logger.info(`Avg. gas price: ${gasPrice.toHexString()}`);
+        if (dynamic) {
+            Logger.info('Dynamic fee data:');
+            Logger.info(`Current max fee per gas: ${feeData.maxFeePerGas?.toHexString()}`);
+            Logger.info(`Curent max priority fee per gas: ${feeData.maxPriorityFeePerGas?.toHexString()}`);
+        } else {
+            Logger.info(`Avg. gas price: ${gasPrice.toHexString()}`);
+        }
 
         const constructBar = new SingleBar({
             barCompleteChar: '\u2588',
@@ -179,7 +188,7 @@ class ERC20Runtime {
                 const receiverIndex = (i + j + 1) % numAccounts;
                 const receiver = accounts[receiverIndex];
 
-                const transaction = await this.createTransferTransaction(wallet, receiver, sender, chainID, gasPrice);
+                const transaction = await this.createTransferTransaction(wallet, receiver, sender, chainID, gasPrice, feeData, dynamic);
                 transactions.push(transaction);
     
                 sender.incrNonce();
@@ -195,7 +204,7 @@ class ERC20Runtime {
 
         const receiver = accounts[0];
         for (let i = 0; i < remainingTxs; i++) {
-            const transaction = await this.createTransferTransaction(wallet, receiver, sender, chainID, gasPrice);
+            const transaction = await this.createTransferTransaction(wallet, receiver, sender, chainID, gasPrice, feeData, dynamic);
             transactions.push(transaction);
 
             sender.incrNonce();
@@ -213,7 +222,10 @@ class ERC20Runtime {
         receiver: senderAccount, 
         sender: senderAccount, 
         chainID: number, 
-        gasPrice: BigNumber) : Promise<TransactionRequest> {
+        gasPrice: BigNumber,
+        feeData: FeeData,
+        dynamic: boolean = false
+    ) : Promise<TransactionRequest> {
         const contract = new Contract(
             this.contract?.address as string,
             ZexCoin.abi,
@@ -228,9 +240,23 @@ class ERC20Runtime {
         // Override the defaults
         transaction.from = sender.getAddress();
         transaction.chainId = chainID;
-        transaction.gasPrice = BigNumber.from(gasPrice).mul(150).div(100);
         transaction.gasLimit = BigNumber.from(this.gasEstimation).mul(150).div(100);
         transaction.nonce = sender.getNonce();
+
+        if (dynamic) {
+            if (feeData.maxFeePerGas === undefined || feeData.maxPriorityFeePerGas === undefined) {
+                throw new Error('Dynamic fee data not available');
+            }
+
+            const maxFeePerGas = BigNumber.from(feeData.maxFeePerGas).mul(2);
+            const maxPriorityFeePerGas = BigNumber.from(feeData.maxPriorityFeePerGas).mul(2);
+
+            transaction.maxFeePerGas = maxFeePerGas;
+            transaction.maxPriorityFeePerGas = maxPriorityFeePerGas;
+            transaction.type = 2; // dynamic fee type
+        } else {
+            transaction.gasPrice = BigNumber.from(gasPrice).mul(150).div(100);
+        }
 
         return transaction;
     }
