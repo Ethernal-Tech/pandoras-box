@@ -60,16 +60,16 @@ async function run() {
             '20'
         )
         .option(
-            '--dynamic <dynamic>',
+            '--dynamic',
             'Use dynamic transactions',
         )
         .option(
-            '--txpool-timeout <txpool-timeout>',
+            '--txpool-timeout',
             'Timeout to wait for the txpool to be empty (in seconds)',
             '600'
         )
         .option(
-            '--receipts-wait-timeout <receipts-wait-timeout>',
+            '--receipts-wait-timeout',
             'Timeout to gather transaction receipts (in seconds)',
             '600'
         )
