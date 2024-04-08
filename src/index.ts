@@ -60,8 +60,18 @@ async function run() {
             '20'
         )
         .option(
-            '--dynamic',
+            '--dynamic <dynamic>',
             'Use dynamic transactions',
+        )
+        .option(
+            '--txpool-timeout <txpool-timeout>',
+            'Timeout to wait for the txpool to be empty (in seconds)',
+            '600'
+        )
+        .option(
+            '--receipts-wait-timeout <receipts-wait-timeout>',
+            'Timeout to gather transaction receipts (in seconds)',
+            '600'
         )
         .parse();
 
@@ -75,6 +85,8 @@ async function run() {
     const batchSize = options.batch;
     const output = options.output;
     const dynamic = options.dynamic;
+    const txpoolTimeout = options.txpoolTimeout;
+    const receiptsWaitTimeout = options.receiptsWaitTimeout;
 
     let runtime: Runtime;
     switch (mode) {
@@ -158,6 +170,8 @@ async function run() {
     const collectorData = await new StatCollector().generateStats(
         txHashes,
         url,
+        txpoolTimeout,
+        receiptsWaitTimeout
     );
 
     endTime = performance.now();

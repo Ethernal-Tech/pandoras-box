@@ -64,9 +64,11 @@ class StatCollector {
     async gatherTransactionReceipts(
         txHashes: string[],
         stats: txStats[],
-        provider: Provider
+        provider: Provider,
+        txPoolTimeout: number,
+        receiptsGatherTimeout: number,
     ): Promise<Map<number, BlockInfo>> {
-        await this.waitForTxPoolToEmpty((provider as JsonRpcProvider).connection.url, txHashes.length);
+        await this.waitForTxPoolToEmpty((provider as JsonRpcProvider).connection.url, txPoolTimeout);
 
         Logger.info('\nGathering transaction receipts...');
 
@@ -86,13 +88,7 @@ class StatCollector {
         const txToBlockMap: Map<string, number> = new Map<string, number>();
 
         let stopFlag = false;
-        let timeout = txHashes.length * 500; // assume a transaction needs half a second
-        
-        if (timeout < 1000) {
-            timeout = 5000 // Set a minimum timeout of 5 seconds
-        } else if (timeout > 500000) { // if the timeout is too large, set it to 500 seconds
-            timeout = 500000;
-        }
+        let timeout = receiptsGatherTimeout * 1000;
 
         const receiptGatheringPromise = async () => {
             for (const txHash of txHashes) {
@@ -312,6 +308,8 @@ class StatCollector {
     async generateStats(
         txHashes: string[],
         url: string,
+        txPoolTimeout: number,
+        receiptsGatherTimeout: number,
     ): Promise<CollectorData> {
         if (txHashes.length == 0) {
             Logger.warn('No stat data to display');
@@ -329,7 +327,9 @@ class StatCollector {
         const blockInfoMap = await this.gatherTransactionReceipts(
             txHashes,
             txStats,
-            provider
+            provider,
+            txPoolTimeout,
+            receiptsGatherTimeout,
         );
 
         // Print the block utilization data
@@ -342,15 +342,9 @@ class StatCollector {
         return new CollectorData(avgTPS[0], avgTPS[1], avgTPS[2], blockInfoMap);
     }
 
-    async waitForTxPoolToEmpty(url: string, numOfTxs: number): Promise<boolean> {
-        let timeout = numOfTxs * 500; // assume a transaction needs half a second
+    async waitForTxPoolToEmpty(url: string, txPoolTimeout: number): Promise<boolean> {
+        let timeout = txPoolTimeout * 1000;
         let stopFlag = false;
-
-        if (timeout < 1000) {
-            timeout = 5000 // Set a minimum timeout of 5 seconds
-        } else if (timeout > 200000) { // if the timeout is too large, set it to 200 seconds
-            timeout = 200000;
-        }
 
         Logger.info('\nWaiting for all transactions to be executed...');
 
