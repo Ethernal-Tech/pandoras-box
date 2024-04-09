@@ -26,7 +26,7 @@ class TokenDistributor {
 
     tokenRuntime: TokenRuntime;
 
-    totalTx: number;
+    txNumPerUser: number;
     readyMnemonicIndexes: number[];
 
     batchSize: number;
@@ -35,12 +35,12 @@ class TokenDistributor {
         mnemonic: string,
         url: string,
         readyMnemonicIndexes: number[],
-        totalTx: number,
+        txNumPerUser: number,
         tokenRuntime: TokenRuntime,
         batchSize: number,
     ) {
         this.url = url;
-        this.totalTx = totalTx;
+        this.txNumPerUser = txNumPerUser;
         this.mnemonic = mnemonic;
         this.batchSize = batchSize;
         this.tokenRuntime = tokenRuntime;
@@ -82,7 +82,7 @@ class TokenDistributor {
         }
 
         // Fund the accounts
-        await this.fundAccounts(baseCosts, fundableAccounts);
+        await this.fundAccounts(fundableAccounts);
 
         Logger.success('Fund distribution finished!');
 
@@ -92,7 +92,7 @@ class TokenDistributor {
     async calculateRuntimeCosts(): Promise<tokenRuntimeCosts> {
         const transferValue = this.tokenRuntime.GetTransferValue();
 
-        const totalCost = transferValue * this.totalTx;
+        const totalCost = transferValue * this.txNumPerUser * this.readyMnemonicIndexes.length;
         const subAccountCost = Math.ceil(
             totalCost / this.readyMnemonicIndexes.length
         );
@@ -161,10 +161,7 @@ class TokenDistributor {
         Logger.info(costTable.toString());
     }
 
-    async fundAccounts(
-        costs: tokenRuntimeCosts,
-        accounts: distributeAccount[]
-    ) {
+    async fundAccounts(accounts: distributeAccount[]) {
         Logger.info('\nFunding accounts with tokens...');
 
         // Clear the list of ready indexes

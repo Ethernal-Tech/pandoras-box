@@ -24,7 +24,7 @@ export interface Runtime {
         accounts: senderAccount[],
         numTxs: number,
         dynamic: boolean
-    ): Promise<TransactionRequest[]>;
+    ): Promise<Map<string, string[]>>;
 
     // Returns the start message for the user output
     GetStartMessage(): string;

@@ -42,8 +42,8 @@ async function run() {
         )
         .option(
             '-t, --transactions <transactions>',
-            'The total number of transactions to be emitted',
-            '2000'
+            'The total number of transactions to be emitted per user account',
+            '100'
         )
         .option(
             '--mode <mode>',
@@ -78,7 +78,7 @@ async function run() {
     const options = program.opts();
 
     const url = options.jsonRpc;
-    const transactionCount = options.transactions;
+    const txNumPerUser = options.transactions;
     const mode = options.mode;
     const mnemonic = options.mnemonic;
     const subAccountsCount = options.SubAccounts;
@@ -87,6 +87,10 @@ async function run() {
     const dynamic = options.dynamic;
     const txpoolTimeout = options.txpoolTimeout;
     const receiptsWaitTimeout = options.receiptsWaitTimeout;
+
+    if (subAccountsCount < 1) {
+        throw RuntimeErrors.errInvalidSubAccounts;
+    }
 
     let runtime: Runtime;
     switch (mode) {
@@ -118,7 +122,7 @@ async function run() {
     const distributor = new Distributor(
         mnemonic,
         subAccountsCount,
-        transactionCount,
+        txNumPerUser,
         batchSize,
         runtime,
         url
@@ -132,7 +136,7 @@ async function run() {
             mnemonic,
             url,
             accountIndexes,
-            transactionCount,
+            txNumPerUser,
             runtime as TokenRuntime,
             batchSize
         );
@@ -149,16 +153,16 @@ async function run() {
 
     // Run the specific runtime
     const txHashes = await Engine.Run(
-        runtime,
-        new EngineContext(
-            accountIndexes,
-            transactionCount,
-            batchSize,
-            mnemonic,
-            url,
-            dynamic
-        )
-    );
+            runtime,
+            new EngineContext(
+                accountIndexes,
+                txNumPerUser,
+                batchSize,
+                mnemonic,
+                url,
+                dynamic
+            )
+        );
 
     endTime = performance.now();
 

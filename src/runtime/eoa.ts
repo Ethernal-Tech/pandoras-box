@@ -23,6 +23,9 @@ class EOARuntime {
     // is 0.0001 native currency
     defaultValue: BigNumber = parseUnits('0.0001');
 
+    feeData: FeeData | undefined;
+    chainID: number = 100;
+
     constructor(mnemonic: string, url: string) {
         this.mnemonic = mnemonic;
         this.provider = new JsonRpcProvider(url);
@@ -37,6 +40,14 @@ class EOARuntime {
             to: Wallet.fromMnemonic(this.mnemonic, `m/44'/60'/0'/0/1`).address,
             value: this.defaultValue,
         });
+
+        const queryWallet = Wallet.fromMnemonic(
+            this.mnemonic,
+            `m/44'/60'/0'/0/0`
+        ).connect(this.provider);
+
+        this.chainID = await queryWallet.getChainId();
+        this.feeData = await this.provider.getFeeData();
 
         return this.gasEstimation;
     }
@@ -53,24 +64,19 @@ class EOARuntime {
 
     async ConstructTransactions(
         accounts: senderAccount[],
-        numTx: number,
+        numOfTxPerAccount: number,
         dynamic: boolean
-    ): Promise<TransactionRequest[]> {
-        const queryWallet = Wallet.fromMnemonic(
-            this.mnemonic,
-            `m/44'/60'/0'/0/0`
-        ).connect(this.provider);
+    ): Promise<Map<string, string[]>> {
 
-        const chainID = await queryWallet.getChainId();
-        const feeData = await this.provider.getFeeData();
         const gasPrice = this.gasPrice;
+        const totalNumOfTxs = accounts.length * numOfTxPerAccount;
 
-        Logger.info(`Chain ID: ${chainID}`);
+        Logger.info(`Chain ID: ${this.chainID}`);
 
         if (dynamic) {
             Logger.info('Dynamic fee data:');
-            Logger.info(`Current max fee per gas: ${feeData.maxFeePerGas?.toHexString()}`);
-            Logger.info(`Curent max priority fee per gas: ${feeData.maxPriorityFeePerGas?.toHexString()}`);
+            Logger.info(`Current max fee per gas: ${this.feeData?.maxFeePerGas?.toHexString()}`);
+            Logger.info(`Curent max priority fee per gas: ${this.feeData?.maxPriorityFeePerGas?.toHexString()}`);
         } else {
             Logger.info(`Avg. gas price: ${gasPrice.toHexString()}`);
         }
@@ -82,42 +88,36 @@ class EOARuntime {
         });
 
         Logger.info('\nConstructing value transfer transactions...')
-        constructBar.start(numTx, 0, {
+        constructBar.start(totalNumOfTxs, 0, {
             speed: 'N/A',
         });
 
-
-        const transactions: TransactionRequest[] = [];
-
+        const transactions: Map<string, string[]> = new Map();
         const numAccounts = accounts.length;
-        const txsPerAccount = Math.floor(numTx / numAccounts);
-        const remainingTxs = numTx % numAccounts;
 
         for (let i = 0; i < numAccounts; i++) {
             const sender = accounts[i];
 
-            for (let j = 0; j < txsPerAccount; j++) {
+            const txs: string[] = [];
+            for (let j = 0; j < numOfTxPerAccount; j++) {
                 const receiverIndex = (i + j) % numAccounts;
                 const receiver = accounts[receiverIndex];
 
-                transactions.push(this.createTransferTransaction(sender, receiver, chainID, gasPrice, feeData, dynamic));
+                txs.push(
+                    await sender.wallet.signTransaction(
+                        await this.createTransferTransaction(sender, receiver, gasPrice, dynamic)
+                    )
+                );
 
                 sender.incrNonce();
                 constructBar.increment();
             }
-        }
 
-        const sender = accounts[accounts.length - 1];
-        const receiver = accounts[0];
-        for (let i = 0; i < remainingTxs; i++) {
-            transactions.push(this.createTransferTransaction(sender, receiver, chainID, gasPrice, feeData, dynamic));
-
-            sender.incrNonce();
-            constructBar.increment();
+            transactions.set(sender.getAddress(), txs);
         }
 
         constructBar.stop();
-        Logger.success(`Successfully constructed ${numTx} transactions`);
+        Logger.success(`Successfully constructed ${totalNumOfTxs} transactions`);
 
         return transactions;
     }
@@ -129,15 +129,13 @@ class EOARuntime {
     createTransferTransaction(
         sender: senderAccount, 
         receiver: senderAccount, 
-        chainID: number, 
         gasPrice: BigNumber,
-        feeData: FeeData,
         dynamic: boolean = false
     ) : TransactionRequest {
 
         let transaction: TransactionRequest = {
             from: sender.getAddress(),
-            chainId: chainID,
+            chainId: this.chainID,
             to: receiver.getAddress(),
             gasLimit: this.gasEstimation,
             value: this.defaultValue,
@@ -145,12 +143,12 @@ class EOARuntime {
         };
 
         if (dynamic) {
-            if (feeData.maxFeePerGas === undefined || feeData.maxPriorityFeePerGas === undefined) {
+            if (this.feeData?.maxFeePerGas === undefined || this.feeData?.maxPriorityFeePerGas === undefined) {
                 throw new Error('Dynamic fee data not available');
             }
 
-            const maxFeePerGas = BigNumber.from(feeData.maxFeePerGas).mul(2);
-            const maxPriorityFeePerGas = BigNumber.from(feeData.maxPriorityFeePerGas).mul(2);
+            const maxFeePerGas = BigNumber.from(this.feeData.maxFeePerGas).mul(2);
+            const maxPriorityFeePerGas = BigNumber.from(this.feeData.maxPriorityFeePerGas).mul(2);
 
             transaction.maxFeePerGas = maxFeePerGas;
             transaction.maxPriorityFeePerGas = maxPriorityFeePerGas;

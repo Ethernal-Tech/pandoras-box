@@ -40,7 +40,7 @@ class Distributor {
 
     runtimeEstimator: Runtime;
 
-    totalTx: number;
+    numOfTxPerAccount: number;
     requestedSubAccounts: number;
     readyMnemonicIndexes: number[];
     batchSize: number;
@@ -48,13 +48,13 @@ class Distributor {
     constructor(
         mnemonic: string,
         subAccounts: number,
-        totalTx: number,
+        numOfTxPerAccount: number,
         batchSize: number,
         runtimeEstimator: Runtime,
         url: string
     ) {
         this.requestedSubAccounts = subAccounts;
-        this.totalTx = totalTx;
+        this.numOfTxPerAccount = numOfTxPerAccount;
         this.mnemonic = mnemonic;
         this.batchSize = batchSize;
         this.runtimeEstimator = runtimeEstimator;
@@ -119,7 +119,7 @@ class Distributor {
         // Calculate how much each sub-account needs
         // to execute their part of the run cycle.
         // Each account needs at least numTx * (gasPrice * gasLimit + value)
-        const subAccountCost = BigNumber.from(this.totalTx).mul(baseTxCost);
+        const subAccountCost = BigNumber.from(this.numOfTxPerAccount).mul(baseTxCost);
 
         // Calculate the cost of the single distribution transaction
         const singleDistributionCost = await this.provider.estimateGas({

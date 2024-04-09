@@ -48,7 +48,7 @@ class Signer {
 
         // Maps the account index -> starting nonce
         const walletsToInit: number =
-            accountIndexes.length > numTxs ? numTxs : accountIndexes.length;
+        accountIndexes.length > numTxs ? numTxs : accountIndexes.length;
 
         const nonceBar = new SingleBar({
             barCompleteChar: '\u2588',
@@ -103,7 +103,6 @@ class Signer {
         const numTxs = transactions.length;
         const numAccounts = accounts.length;
         const txsPerAccount = Math.floor(numTxs / numAccounts);
-        const remainingTxs = numTxs % numAccounts;
 
         await Promise.all(accounts.map(async (sender, index) => {
             const address = sender.getAddress();

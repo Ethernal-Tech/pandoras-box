@@ -34,9 +34,9 @@ class Batcher {
         return batches;
     }
 
-    static async sendTransactionsInParallelBySender(
+    static async sendTransactionsInParallel(
         signedTxs: Map<string, string[]>,
-        batchSize: number,
+        numOfTxs: number,
         url: string,
     ): Promise<string[]> {
         const batchBar = new SingleBar({
@@ -45,9 +45,9 @@ class Batcher {
             hideCursor: true,
         });
 
-        Logger.info('Sending transactions in parallel by sender...');
+        Logger.info('\nSending transactions in parallel by sender...');
 
-        batchBar.start(batchSize, 0, {
+        batchBar.start(numOfTxs, 0, {
             speed: 'N/A',
         });
 
@@ -86,6 +86,27 @@ class Batcher {
         Logger.success(
             `All transactions have been sent in ` + (endTime - startTime) / 1000 + 's'
         );
+
+        return txHashes;
+    }
+
+    static async sendTransactionsForSender(
+        signedTxs: string[],
+        batchErrors: string[],
+        url: string,
+    ): Promise<string[]> {
+        const txHashes: string[] = [];
+
+        for (const tx of signedTxs) {
+            const singleRequests = JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'eth_sendRawTransaction',
+                params: [tx],
+                id: 0,
+            });
+
+            await Batcher.sendTransactionWithRetry(url, singleRequests, batchErrors, txHashes, 3);
+        }
 
         return txHashes;
     }

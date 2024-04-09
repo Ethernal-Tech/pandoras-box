@@ -32,6 +32,9 @@ class ERC20Runtime {
 
     baseDeployer: Wallet;
 
+    feeData: FeeData | undefined;
+    chainID: number = 100;
+
     constructor(mnemonic: string, url: string) {
         this.mnemonic = mnemonic;
         this.provider = new JsonRpcProvider(url);
@@ -76,6 +79,9 @@ class ERC20Runtime {
             Wallet.fromMnemonic(this.mnemonic, `m/44'/60'/0'/0/1`).address,
             this.defaultTransferValue
         );
+
+        this.chainID = await this.baseDeployer.getChainId();
+        this.feeData = await this.provider.getFeeData();
 
         return this.gasEstimation;
     }
@@ -141,13 +147,14 @@ class ERC20Runtime {
 
     async ConstructTransactions(
         accounts: senderAccount[],
-        numTx: number,
+        numOfTxPerAccount: number,
         dynamic: boolean
-    ): Promise<TransactionRequest[]> {
+    ): Promise<Map<string, string[]>> {
         if (!this.contract) {
             throw RuntimeErrors.errRuntimeNotInitialized;
         }
 
+        const totalNumOfTxs = accounts.length * numOfTxPerAccount;
         const chainID = await this.baseDeployer.getChainId();
         const feeData = await this.provider.getFeeData();
         const gasPrice = this.gasPrice;
@@ -168,14 +175,12 @@ class ERC20Runtime {
         });
 
         Logger.info(`\nConstructing ${this.coinName} transfer transactions...`);
-        constructBar.start(numTx, 0, {
+        constructBar.start(totalNumOfTxs, 0, {
             speed: 'N/A',
         });
 
-        const transactions: TransactionRequest[] = [];
+        const transactions: Map<string, string[]> = new Map();
         const numAccounts = accounts.length;
-        const txsPerAccount = Math.floor(numTx / numAccounts);
-        const remainingTxs = numTx % numAccounts;
 
         for (let i = 0; i < numAccounts; i++) {
             const sender = accounts[i];
@@ -184,35 +189,27 @@ class ERC20Runtime {
                 `m/44'/60'/0'/0/${i}`
             ).connect(this.provider);
 
-            for (let j = 0; j < txsPerAccount; j++) {
+            const txs: string[] = [];
+
+            for (let j = 0; j < numOfTxPerAccount; j++) {
                 const receiverIndex = (i + j + 1) % numAccounts;
                 const receiver = accounts[receiverIndex];
 
-                const transaction = await this.createTransferTransaction(wallet, receiver, sender, chainID, gasPrice, feeData, dynamic);
-                transactions.push(transaction);
+                txs.push(
+                    await sender.wallet.signTransaction(
+                        await this.createTransferTransaction(wallet, receiver, sender, gasPrice, dynamic)
+                    )
+                );
     
                 sender.incrNonce();
                 constructBar.increment();
             }
-        }
 
-        const sender = accounts[accounts.length - 1];
-        const wallet = Wallet.fromMnemonic(
-            this.mnemonic,
-            `m/44'/60'/0'/0/${accounts.length - 1}`
-        ).connect(this.provider);
-
-        const receiver = accounts[0];
-        for (let i = 0; i < remainingTxs; i++) {
-            const transaction = await this.createTransferTransaction(wallet, receiver, sender, chainID, gasPrice, feeData, dynamic);
-            transactions.push(transaction);
-
-            sender.incrNonce();
-            constructBar.increment();
+            transactions.set(sender.getAddress(), txs);
         }
 
         constructBar.stop();
-        Logger.success(`Successfully constructed ${numTx} transactions`);
+        Logger.success(`Successfully constructed ${totalNumOfTxs} transactions`);
 
         return transactions;
     }
@@ -221,9 +218,7 @@ class ERC20Runtime {
         wallet: Wallet, 
         receiver: senderAccount, 
         sender: senderAccount, 
-        chainID: number, 
         gasPrice: BigNumber,
-        feeData: FeeData,
         dynamic: boolean = false
     ) : Promise<TransactionRequest> {
         const contract = new Contract(
@@ -239,17 +234,17 @@ class ERC20Runtime {
 
         // Override the defaults
         transaction.from = sender.getAddress();
-        transaction.chainId = chainID;
+        transaction.chainId = this.chainID;
         transaction.gasLimit = BigNumber.from(this.gasEstimation).mul(150).div(100);
         transaction.nonce = sender.getNonce();
 
         if (dynamic) {
-            if (feeData.maxFeePerGas === undefined || feeData.maxPriorityFeePerGas === undefined) {
+            if (this.feeData?.maxFeePerGas === undefined || this.feeData?.maxPriorityFeePerGas === undefined) {
                 throw new Error('Dynamic fee data not available');
             }
 
-            const maxFeePerGas = BigNumber.from(feeData.maxFeePerGas).mul(2);
-            const maxPriorityFeePerGas = BigNumber.from(feeData.maxPriorityFeePerGas).mul(2);
+            const maxFeePerGas = BigNumber.from(this.feeData?.maxFeePerGas).mul(2);
+            const maxPriorityFeePerGas = BigNumber.from(this.feeData?.maxPriorityFeePerGas).mul(2);
 
             transaction.maxFeePerGas = maxFeePerGas;
             transaction.maxPriorityFeePerGas = maxPriorityFeePerGas;
