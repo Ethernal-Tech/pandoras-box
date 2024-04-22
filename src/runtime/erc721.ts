@@ -1,6 +1,7 @@
 import { BigNumber } from '@ethersproject/bignumber';
 import { Contract, ContractFactory } from '@ethersproject/contracts';
 import {
+    FeeData,
     JsonRpcProvider,
     Provider,
     TransactionRequest,
@@ -29,6 +30,9 @@ class ERC721Runtime {
     contract: Contract | undefined;
 
     baseDeployer: Wallet;
+
+    feeData: FeeData | undefined;
+    chainID: number = 100;
 
     constructor(mnemonic: string, url: string) {
         this.mnemonic = mnemonic;
@@ -72,6 +76,9 @@ class ERC721Runtime {
             this.nftURL
         );
 
+        this.chainID = await this.baseDeployer.getChainId();
+        this.feeData = await this.provider.getFeeData();
+
         return this.gasEstimation;
     }
 
@@ -91,17 +98,26 @@ class ERC721Runtime {
 
     async ConstructTransactions(
         accounts: senderAccount[],
-        numTx: number
-    ): Promise<TransactionRequest[]> {
+        numOfTxPerAccount: number,
+        dynamic: boolean
+    ): Promise<Map<string, string[]>> {
         if (!this.contract) {
             throw RuntimeErrors.errRuntimeNotInitialized;
         }
 
+        const totalNumOfTxs = accounts.length * numOfTxPerAccount;
         const chainID = await this.baseDeployer.getChainId();
+        const feeData = await this.provider.getFeeData();
         const gasPrice = this.gasPrice;
 
         Logger.info(`Chain ID: ${chainID}`);
-        Logger.info(`Avg. gas price: ${gasPrice.toHexString()}`);
+        if (dynamic) {
+            Logger.info('Dynamic fee data:');
+            Logger.info(`Current max fee per gas: ${feeData.maxFeePerGas?.toHexString()}`);
+            Logger.info(`Curent max priority fee per gas: ${feeData.maxPriorityFeePerGas?.toHexString()}`);
+        } else {
+            Logger.info(`Avg. gas price: ${gasPrice.toHexString()}`);
+        }
 
         const constructBar = new SingleBar({
             barCompleteChar: '\u2588',
@@ -110,48 +126,79 @@ class ERC721Runtime {
         });
 
         Logger.info(`\nConstructing ${this.nftName} mint transactions...`);
-        constructBar.start(numTx, 0, {
+        constructBar.start(totalNumOfTxs, 0, {
             speed: 'N/A',
         });
 
-        const transactions: TransactionRequest[] = [];
+        const transactions: Map<string, string[]> = new Map();
+        const numAccounts = accounts.length;
 
-        for (let i = 0; i < numTx; i++) {
-            const senderIndex = i % accounts.length;
-            const sender = accounts[senderIndex];
-
+        for (let i = 0; i < numAccounts; i++) {
+            const sender = accounts[i];
             const wallet = Wallet.fromMnemonic(
                 this.mnemonic,
-                `m/44'/60'/0'/0/${senderIndex}`
+                `m/44'/60'/0'/0/${i}`
             ).connect(this.provider);
 
-            const contract = new Contract(
-                this.contract.address,
-                ZexNFTs.abi,
-                wallet
-            );
+            const txs: string[] = [];
+            for (let j = 0; j < numOfTxPerAccount; j++) {
+                txs.push(
+                    await sender.wallet.signTransaction(
+                        await this.createTransaction(wallet, sender, gasPrice, dynamic)
+                    )
+                );
 
-            const transaction = await contract.populateTransaction.createNFT(
-                this.nftURL
-            );
+                sender.incrNonce();
+                constructBar.increment();
+            }
 
-            // Override the defaults
-            transaction.from = sender.getAddress();
-            transaction.chainId = chainID;
-            transaction.gasPrice = gasPrice;
-            transaction.gasLimit = this.gasEstimation;
-            transaction.nonce = sender.getNonce();
-
-            transactions.push(transaction);
-
-            sender.incrNonce();
-            constructBar.increment();
+            transactions.set(sender.getAddress(), txs);
         }
 
         constructBar.stop();
-        Logger.success(`Successfully constructed ${numTx} transactions`);
+        Logger.success(`Successfully constructed ${totalNumOfTxs} transactions`);
 
         return transactions;
+    }
+
+    async createTransaction(
+        wallet: Wallet, 
+        sender: senderAccount, 
+        gasPrice: BigNumber,
+        dynamic: boolean = false
+    ) : Promise<TransactionRequest> {
+        const contract = new Contract(
+            this.contract?.address as string,
+            ZexNFTs.abi,
+            wallet
+        );
+
+        const transaction = await contract.populateTransaction.createNFT(
+            this.nftURL
+        );
+
+        // Override the defaults
+        transaction.from = sender.getAddress();
+        transaction.chainId = this.chainID;
+        transaction.gasLimit = BigNumber.from(this.gasEstimation).mul(150).div(100);
+        transaction.nonce = sender.getNonce();
+
+        if (dynamic) {
+            if (this.feeData?.maxFeePerGas === undefined || this.feeData?.maxPriorityFeePerGas === undefined) {
+                throw new Error('Dynamic fee data not available');
+            }
+
+            const maxFeePerGas = BigNumber.from(this.feeData?.maxFeePerGas).mul(2);
+            const maxPriorityFeePerGas = BigNumber.from(this.feeData?.maxPriorityFeePerGas).mul(2);
+
+            transaction.maxFeePerGas = maxFeePerGas;
+            transaction.maxPriorityFeePerGas = maxPriorityFeePerGas;
+            transaction.type = 2; // dynamic fee type
+        } else {
+            transaction.gasPrice = BigNumber.from(gasPrice).mul(150).div(150);
+        }
+
+        return transaction;
     }
 
     GetStartMessage(): string {

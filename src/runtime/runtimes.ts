@@ -22,8 +22,9 @@ export interface Runtime {
     // Constructs the specific runtime transactions
     ConstructTransactions(
         accounts: senderAccount[],
-        numTxs: number
-    ): Promise<TransactionRequest[]>;
+        numTxs: number,
+        dynamic: boolean
+    ): Promise<Map<string, string[]>>;
 
     // Returns the start message for the user output
     GetStartMessage(): string;
@@ -49,6 +50,9 @@ export interface TokenRuntime extends Runtime, InitializedRuntime {
 
     // Funds the specified account
     FundAccount(address: string, amount: number): Promise<void>;
+
+    // Creates a fund transaction
+    CreateFundTransaction(to: string, amount: number): Promise<TransactionRequest>;
 }
 
 export interface NFTRuntime extends Runtime, InitializedRuntime {}

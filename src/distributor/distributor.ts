@@ -1,5 +1,5 @@
 import { BigNumber } from '@ethersproject/bignumber';
-import { JsonRpcProvider, Provider } from '@ethersproject/providers';
+import { JsonRpcProvider, Provider, TransactionRequest } from '@ethersproject/providers';
 import { formatEther } from '@ethersproject/units';
 import { Wallet } from '@ethersproject/wallet';
 import { SingleBar } from 'cli-progress';
@@ -8,6 +8,7 @@ import Heap from 'heap';
 import Logger from '../logger/logger';
 import { Runtime } from '../runtime/runtimes';
 import DistributorErrors from './errors';
+import Batcher from '../runtime/batcher';
 
 class distributeAccount {
     missingFunds: BigNumber;
@@ -39,20 +40,23 @@ class Distributor {
 
     runtimeEstimator: Runtime;
 
-    totalTx: number;
+    numOfTxPerAccount: number;
     requestedSubAccounts: number;
     readyMnemonicIndexes: number[];
+    batchSize: number;
 
     constructor(
         mnemonic: string,
         subAccounts: number,
-        totalTx: number,
+        numOfTxPerAccount: number,
+        batchSize: number,
         runtimeEstimator: Runtime,
         url: string
     ) {
         this.requestedSubAccounts = subAccounts;
-        this.totalTx = totalTx;
+        this.numOfTxPerAccount = numOfTxPerAccount;
         this.mnemonic = mnemonic;
+        this.batchSize = batchSize;
         this.runtimeEstimator = runtimeEstimator;
         this.readyMnemonicIndexes = [];
 
@@ -108,12 +112,14 @@ class Distributor {
         const baseTxEstimate = await this.runtimeEstimator.EstimateBaseTx();
         const baseGasPrice = await this.runtimeEstimator.GetGasPrice();
 
-        const baseTxCost = baseGasPrice.mul(baseTxEstimate).add(inherentValue);
+        // add some more tokens to base tx cost if london fork is enabled,
+        // since base fee dynamically expands
+        const baseTxCost = baseGasPrice.mul(baseTxEstimate).add(inherentValue).mul(20);
 
         // Calculate how much each sub-account needs
         // to execute their part of the run cycle.
         // Each account needs at least numTx * (gasPrice * gasLimit + value)
-        const subAccountCost = BigNumber.from(this.totalTx).mul(baseTxCost);
+        const subAccountCost = BigNumber.from(this.numOfTxPerAccount).mul(baseTxCost);
 
         // Calculate the cost of the single distribution transaction
         const singleDistributionCost = await this.provider.estimateGas({
@@ -182,7 +188,7 @@ class Distributor {
         });
 
         costTable.push(
-            ['Required acc. balance', formatEther(costs.subAccount)],
+            ['Recommended acc. balance', formatEther(costs.subAccount)],
             ['Single distribution cost', formatEther(costs.accDistributionCost)]
         );
 
@@ -220,6 +226,29 @@ class Distributor {
     async fundAccounts(costs: runtimeCosts, accounts: distributeAccount[]) {
         Logger.info('\nFunding accounts...');
 
+        const gasPrice = await this.ethWallet.getGasPrice();
+        const chainID = await this.ethWallet.getChainId();
+        let nonce = await this.ethWallet.getTransactionCount();
+
+        const signedTxs: string[] = [];
+        for (const acc of accounts) {
+            const tx: TransactionRequest = {
+                from: this.ethWallet.address,
+                chainId: chainID,
+                to: acc.address,
+                gasPrice: BigNumber.from(gasPrice).mul(150).div(100),
+                gasLimit: 21000,
+                value: acc.missingFunds,
+                nonce: nonce,
+            };
+
+            signedTxs.push(await this.ethWallet.signTransaction(tx));
+            nonce++;
+        }
+
+        const txHashes = await Batcher.batchTransactions(signedTxs, this.batchSize, 
+            (this.provider as JsonRpcProvider).connection.url, false);
+
         const fundBar = new SingleBar({
             barCompleteChar: '\u2588',
             barIncompleteChar: '\u2591',
@@ -230,17 +259,42 @@ class Distributor {
             speed: 'N/A',
         });
 
-        for (const acc of accounts) {
-            await this.ethWallet.sendTransaction({
-                to: acc.address,
-                value: acc.missingFunds,
-            });
+        const waitErrors: string[] = [];
+        for (let i = 0; i < txHashes.length; i++) {
+            const txHash = txHashes[i];
+            try {
+                const txReceipt = await this.provider.waitForTransaction(
+                    txHash,
+                    1,
+                    60*1000, // 1min
+                );
+                fundBar.increment();
 
-            fundBar.increment();
-            this.readyMnemonicIndexes.push(acc.mnemonicIndex);
+                if (txReceipt == null) {
+                    throw new Error(
+                    `transaction ${txHash} failed to be fetched in time`
+                    );
+                } else if (txReceipt.status != undefined && txReceipt.status == 0) {
+                    throw new Error(
+                    `transaction ${txHash} failed during execution`
+                    );
+                }
+
+                this.readyMnemonicIndexes.push(accounts[i].mnemonicIndex);
+            } catch (e: any) {
+                waitErrors.push(e);
+            }
         }
 
         fundBar.stop();
+
+        if (waitErrors.length > 0) {
+            Logger.warn('Errors encountered during funding of sub accounts:');
+
+            for (const err of waitErrors) {
+                Logger.error(err);
+            }
+        }
     }
 }
 

@@ -42,8 +42,8 @@ async function run() {
         )
         .option(
             '-t, --transactions <transactions>',
-            'The total number of transactions to be emitted',
-            '2000'
+            'The total number of transactions to be emitted per user account',
+            '100'
         )
         .option(
             '--mode <mode>',
@@ -56,20 +56,41 @@ async function run() {
         )
         .option(
             '-b, --batch <batch>',
-            'The batch size of JSON-RPC transactions',
+            'The batch size of JSON-RPC transactions to send per second',
             '20'
+        )
+        .option(
+            '--dynamic',
+            'Use dynamic transactions',
+        )
+        .option(
+            '--txpool-timeout',
+            'Timeout to wait for the txpool to be empty (in seconds)',
+            '600'
+        )
+        .option(
+            '--receipts-wait-timeout',
+            'Timeout to gather transaction receipts (in seconds)',
+            '600'
         )
         .parse();
 
     const options = program.opts();
 
     const url = options.jsonRpc;
-    const transactionCount = options.transactions;
+    const txNumPerUser = options.transactions;
     const mode = options.mode;
     const mnemonic = options.mnemonic;
     const subAccountsCount = options.SubAccounts;
     const batchSize = options.batch;
     const output = options.output;
+    const dynamic = options.dynamic;
+    const txpoolTimeout = options.txpoolTimeout;
+    const receiptsWaitTimeout = options.receiptsWaitTimeout;
+
+    if (subAccountsCount < 1) {
+        throw RuntimeErrors.errInvalidSubAccounts;
+    }
 
     let runtime: Runtime;
     switch (mode) {
@@ -95,49 +116,71 @@ async function run() {
             throw RuntimeErrors.errUnknownRuntime;
     }
 
+    let startTime = performance.now();
+
     // Distribute the native currency funds
     const distributor = new Distributor(
         mnemonic,
         subAccountsCount,
-        transactionCount,
+        txNumPerUser,
+        batchSize,
         runtime,
         url
     );
 
     const accountIndexes: number[] = await distributor.distribute();
 
-    // Distribute the token funds, if any
+   // Distribute the token funds, if any
     if (mode === RuntimeType.ERC20) {
         const tokenDistributor = new TokenDistributor(
             mnemonic,
+            url,
             accountIndexes,
-            transactionCount,
-            runtime as TokenRuntime
+            txNumPerUser,
+            runtime as TokenRuntime,
+            batchSize
         );
 
         // Start the distribution
         await tokenDistributor.distributeTokens();
     }
 
+    let endTime = performance.now();
+
+    Logger.info("\nTime to distribute funds: " + (endTime - startTime) / 1000 + "s\n");
+
+    startTime = performance.now();
+
     // Run the specific runtime
     const txHashes = await Engine.Run(
-        runtime,
-        new EngineContext(
-            accountIndexes,
-            transactionCount,
-            batchSize,
-            mnemonic,
-            url
-        )
-    );
+            runtime,
+            new EngineContext(
+                accountIndexes,
+                txNumPerUser,
+                batchSize,
+                mnemonic,
+                url,
+                dynamic
+            )
+        );
+
+    endTime = performance.now();
+
+    Logger.info("\nTime to run the stress test: " + (endTime - startTime) / 1000 + "s\n");
+
+    startTime = performance.now();
 
     // Collect the data
     const collectorData = await new StatCollector().generateStats(
         txHashes,
-        mnemonic,
         url,
-        batchSize
+        txpoolTimeout,
+        receiptsWaitTimeout
     );
+
+    endTime = performance.now();
+
+    Logger.info("\nTime to gather and calculate results: " + (endTime - startTime) / 1000 + "s\n");
 
     // Output the data if needed
     if (output) {
@@ -149,4 +192,7 @@ run()
     .then()
     .catch((err) => {
         Logger.error(err);
+    })
+    .finally(() => {
+        process.exit();
     });

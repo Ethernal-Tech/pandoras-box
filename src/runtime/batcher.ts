@@ -34,82 +34,44 @@ class Batcher {
         return batches;
     }
 
-    static async batchTransactions(
-        signedTxs: string[],
-        batchSize: number,
-        url: string
+    static async sendTransactionsInParallel(
+        signedTxs: Map<string, string[]>,
+        numOfTxs: number,
+        url: string,
     ): Promise<string[]> {
-        // Generate the transaction hash batches
-        const batches: string[][] = Batcher.generateBatches<string>(
-            signedTxs,
-            batchSize
-        );
-
-        Logger.info('Sending transactions in batches...');
-
         const batchBar = new SingleBar({
             barCompleteChar: '\u2588',
             barIncompleteChar: '\u2591',
             hideCursor: true,
         });
 
-        batchBar.start(batches.length, 0, {
+        Logger.info('\nSending transactions in parallel by sender...');
+
+        batchBar.start(numOfTxs, 0, {
             speed: 'N/A',
         });
 
         const txHashes: string[] = [];
         const batchErrors: string[] = [];
 
-        try {
-            let nextIndx = 0;
-            const responses = await Promise.all(
-                batches.map((item) => {
-                    let singleRequests = '';
-                    for (let i = 0; i < item.length; i++) {
-                        singleRequests += JSON.stringify({
-                            jsonrpc: '2.0',
-                            method: 'eth_sendRawTransaction',
-                            params: [item[i]],
-                            id: nextIndx++,
-                        });
+        const startTime = performance.now();
 
-                        if (i != item.length - 1) {
-                            singleRequests += ',\n';
-                        }
-                    }
+        await Promise.all(Array.from(signedTxs.entries()).map(async ([address, txs]) => {
+            for (const tx of txs) {
+                const singleRequests = JSON.stringify({
+                    jsonrpc: '2.0',
+                    method: 'eth_sendRawTransaction',
+                    params: [tx],
+                    id: 0,
+                });
 
-                    batchBar.increment();
+                await Batcher.sendTransactionWithRetry(url, singleRequests, batchErrors, txHashes, 3);
 
-                    return axios({
-                        url: url,
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        data: '[' + singleRequests + ']',
-                    });
-                })
-            );
-
-            for (let i = 0; i < responses.length; i++) {
-                const content = responses[i].data;
-
-                for (const cnt of content) {
-                    if (cnt.hasOwnProperty('error')) {
-                        // Error occurred during batch sends
-                        batchErrors.push(cnt.error.message);
-
-                        continue;
-                    }
-
-                    txHashes.push(cnt.result);
-                }
+                batchBar.increment();
             }
-        } catch (e: any) {
-            Logger.error(e.message);
-        }
+        }));
 
-        batchBar.stop();
+        const endTime = performance.now();
 
         if (batchErrors.length > 0) {
             Logger.warn('Errors encountered during batch sending:');
@@ -119,11 +81,173 @@ class Batcher {
             }
         }
 
+        batchBar.stop();
+
         Logger.success(
-            `${batches.length} ${batches.length > 1 ? 'batches' : 'batch'} sent`
+            `All transactions have been sent in ` + (endTime - startTime) / 1000 + 's'
         );
 
         return txHashes;
+    }
+
+    static async sendTransactionsForSender(
+        signedTxs: string[],
+        batchErrors: string[],
+        url: string,
+    ): Promise<string[]> {
+        const txHashes: string[] = [];
+
+        for (const tx of signedTxs) {
+            const singleRequests = JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'eth_sendRawTransaction',
+                params: [tx],
+                id: 0,
+            });
+
+            await Batcher.sendTransactionWithRetry(url, singleRequests, batchErrors, txHashes, 3);
+        }
+
+        return txHashes;
+    }
+
+    static async batchTransactions(
+        signedTxs: string[],
+        batchSize: number,
+        url: string,
+        progressBar: boolean,
+    ): Promise<string[]> {
+        // Generate the transaction hash batches
+        const batches: string[][] = Batcher.generateBatches<string>(
+            signedTxs,
+            batchSize
+        );
+
+        const batchBar = new SingleBar({
+            barCompleteChar: '\u2588',
+            barIncompleteChar: '\u2591',
+            hideCursor: true,
+        });
+
+        if (progressBar) {
+            Logger.info('Sending transactions in batches...');
+
+            batchBar.start(batches.length, 0, {
+                speed: 'N/A',
+            });
+        }
+
+        const txHashes: string[] = [];
+        const batchErrors: string[] = [];
+
+        try {
+            let nextIndx = 0;
+
+            for (const batch of batches) {
+                let singleRequests = '';
+                for (let i = 0; i < batch.length; i++) {
+                    singleRequests += JSON.stringify({
+                        jsonrpc: '2.0',
+                        method: 'eth_sendRawTransaction',
+                        params: [batch[i]],
+                        id: nextIndx++,
+                    });
+
+                    if (i != batch.length - 1) {
+                        singleRequests += ',\n';
+                    }
+                }
+
+                await Batcher.sendTransaction(url, singleRequests, batchErrors, txHashes);
+
+                if (progressBar) {
+                    batchBar.increment();
+                }
+            }
+        } catch (e: any) {
+            Logger.error(e.message);
+        }
+
+        if (batchErrors.length > 0) {
+            Logger.warn('Errors encountered during batch sending:');
+
+            for (const err of batchErrors) {
+                Logger.error(err);
+            }
+        }
+
+        if (progressBar) {
+            batchBar.stop();
+
+            Logger.success(
+                `${batches.length} ${batches.length > 1 ? 'batches' : 'batch'} sent`
+            );
+        }
+
+        return txHashes;
+    }
+
+    static async sendTransaction(url: string, singleRequests: string, batchErrors: string[], txHashes: string[]) {
+        try {
+            const response = await axios({
+                url: url,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Connection': 'keep-alive', // Add this line to indicate keeping the TCP connection alive
+                },
+                data: '[' + singleRequests + ']',
+            });
+
+            const content = response.data;
+
+            for (const cnt of content) {
+                if (cnt.hasOwnProperty('error')) {
+                    // Error occurred during batch sends
+                    batchErrors.push(cnt.error.message);
+                    continue;
+                }
+
+                txHashes.push(cnt.result);
+            }
+
+            //await new Promise(resolve => setTimeout(resolve, 10));
+        } catch (e: any) {
+            Logger.error(e.message);
+            Batcher.sendTransaction(url, singleRequests, batchErrors, txHashes);
+        }
+    }
+
+    static async sendTransactionWithRetry(url: string, singleRequests: string, batchErrors: string[], txHashes: string[], maxRetries: number = 3) {
+        let retries = 0;
+        while (retries < maxRetries) {
+            try {
+                const response = await axios({
+                    url: url,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Connection': 'keep-alive',
+                    },
+                    data: '[' + singleRequests + ']',
+                });
+
+                const content = response.data;
+                for (const cnt of content) {
+                    if (cnt.hasOwnProperty('error')) {
+                        // Error occurred during batch sends
+                        batchErrors.push(cnt.error.message);
+                        continue;
+                    }
+                    txHashes.push(cnt.result);
+                }
+
+                return; // Exit the function if successful
+            } catch (e: any) {
+                Logger.error(e.message);
+                retries++;
+            }
+        }
     }
 }
 
